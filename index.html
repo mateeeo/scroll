@@ -75,10 +75,9 @@
               v.onseeked = () => { clearTimeout(t); r(); };
             });
             ctx.drawImage(v, 0, 0, c.width, c.height);
-            // JPEG universal + corte exato após a vírgula do Data URL
             const dataUrl = c.toDataURL('image/jpeg', 0.45);
-            const cleanB64 = dataUrl.substring(dataUrl.indexOf(',') + 1);
-            frames.push(cleanB64);
+            const b64 = dataUrl.slice(dataUrl.indexOf(',') + 1);
+            if (b64.length > 20) frames.push(b64);
           }
           URL.revokeObjectURL(v.src);
           res(frames);
@@ -108,21 +107,13 @@
         return img;
       });
 
-      const firstImg = imgs.at(0);
-      if (firstImg) {
-        firstImg.onload = () => {
-          c.width = firstImg.naturalWidth || 112;
-          c.height = firstImg.naturalHeight || 200;
-          ctx.drawImage(firstImg, 0, 0, c.width, c.height);
-        };
-      }
-
       let idx = 0, paused = false;
       c.onclick = () => paused = !paused;
 
       setInterval(() => {
         if (paused || s.dataset.visible !== '1') return;
         const img = imgs.at(idx);
+        // Só desenha se a imagem carregou com sucesso (naturalWidth > 0 evita o erro broken state)
         if (img && img.complete && img.naturalWidth > 0) {
           if (c.width !== img.naturalWidth) {
             c.width = img.naturalWidth;
@@ -136,7 +127,8 @@
 
     function update() {
       if (list.length) {
-        const hash = '#' + list.map(f => f.join(',')).join('|');
+        // Usa '~' em vez de ',' para nunca conflitar com o cabeçalho Base64
+        const hash = '#' + list.map(f => f.join('~')).join('|');
         fullLink = location.origin + location.pathname + hash;
         try { history.replaceState(null, '', hash); } catch (e) {}
       }
@@ -161,7 +153,7 @@
     };
 
     if (location.hash.length > 1) {
-      list = location.hash.slice(1).split('|').map(v => v.split(','));
+      list = location.hash.slice(1).split('|').map(v => v.split('~'));
       list.forEach(addSlide);
       update();
     }
