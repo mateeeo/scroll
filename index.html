@@ -2,68 +2,69 @@
 <html lang="pt">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Feed Instantâneo < 1MB</title>
+  <title>Feed PC < 1MB</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { background: #000; color: #fff; font-family: sans-serif; overflow: hidden; }
     .bar { position: fixed; top: 12px; left: 12px; right: 12px; z-index: 9; display: flex; justify-content: space-between; align-items: center; }
-    .info { background: #111c; padding: 6px 10px; border-radius: 6px; font-size: 12px; }
-    .btn { padding: 8px 12px; border-radius: 6px; font-size: 12px; font-weight: bold; cursor: pointer; border: none; }
+    .info { background: #111c; padding: 8px 12px; border-radius: 6px; font-size: 13px; }
+    .btn { padding: 8px 14px; border-radius: 6px; font-size: 13px; font-weight: bold; cursor: pointer; border: none; }
     .feed { height: 100vh; overflow-y: scroll; scroll-snap-type: y mandatory; }
     .feed::-webkit-scrollbar { display: none; }
-    .slide { height: 100vh; scroll-snap-align: start; display: flex; justify-content: center; align-items: center; background: #000; }
+    .slide { height: 100vh; scroll-snap-align: start; display: flex; justify-content: center; align-items: center; }
     canvas { height: 100%; width: 100%; max-width: 480px; object-fit: cover; }
-    .msg { height: 100vh; display: flex; align-items: center; justify-content: center; color: #888; font-size: 14px; text-align: center; padding: 20px; }
+    .msg { height: 100vh; display: flex; align-items: center; justify-content: center; color: #888; font-size: 15px; }
   </style>
 </head>
 <body>
   <div class="bar">
     <div class="info" id="info">0/10 • 0 KB</div>
     <div>
-      <button class="btn" style="background:#333;color:#fff" onclick="location.hash='';location.reload()">Limpar</button>
-      <button class="btn" style="background:#25d366;color:#000" onclick="navigator.clipboard.writeText(location.href);this.textContent='Copiado!'">Copiar</button>
-      <label class="btn" style="background:#fe2c55;color:#fff">+ Vídeos<input type="file" id="in" accept="video/*" multiple hidden></label>
+      <button class="btn" style="background:#333;color:#fff" onclick="history.replaceState(null,'',location.pathname);location.reload()">Limpar</button>
+      <button class="btn" style="background:#25d366;color:#000" id="copyBtn">Copiar Link</button>
+      <label class="btn" style="background:#fe2c55;color:#fff">+ Subir Vídeos<input type="file" id="in" accept="video/*" multiple hidden></label>
     </div>
   </div>
-  <div class="feed" id="feed"><div class="msg" id="msg">Suba até 10 vídeos (compressão instantânea < 1MB)</div></div>
+  <div class="feed" id="feed"><div class="msg" id="msg">Selecione até 10 vídeos no PC (< 1MB)</div></div>
 
   <script>
-    let list = []; // Guarda arrays de frames WebP por vídeo
+    let list = [];
+    let fullLink = location.href;
 
-    // Extrai 16 frames ultra-leves saltando no tempo (sem esperar reprodução!)
     function extractFrames(file) {
       return new Promise(res => {
         const v = document.createElement('video');
-        v.muted = v.playsInline = true;
+        v.muted = true;
         v.src = URL.createObjectURL(file);
 
-        v.onloadedmetadata = async () => {
+        v.onloadeddata = async () => {
           const c = document.createElement('canvas');
           c.height = 240;
           c.width = Math.round(240 * (v.videoWidth / v.videoHeight)) || 136;
           const ctx = c.getContext('2d');
           
           const frames = [];
-          const totalFrames = 16; // 16 frames a 8fps = 2s em loop contínuo (~65KB por vídeo)
-          const step = Math.min(v.duration || 2, 4) / totalFrames;
+          const total = 15;
+          const step = Math.min(v.duration || 2, 4) / total;
 
-          for (let i = 0; i < totalFrames; i++) {
-            v.currentTime = i * step;
-            await new Promise(r => v.onseeked = r);
+          for (let i = 0; i < total; i++) {
+            v.currentTime = i * step + 0.01;
+            await new Promise(r => {
+              const t = setTimeout(r, 100);
+              v.onseeked = () => { clearTimeout(t); r(); };
+            });
             ctx.drawImage(v, 0, 0, c.width, c.height);
-            // Exporta em WebP qualidade 0.35 (~3.5 KB por frame)
-            const data = c.toDataURL('image/webp', 0.35).split(',');
-            frames.push(data);
+            frames.push(c.toDataURL('image/webp', 0.35).split(','));
           }
           URL.revokeObjectURL(v.src);
           res(frames);
         };
+        v.onerror = () => res([]);
       });
     }
 
     function addSlide(frames) {
-      if (!frames || !frames.length) return;
+      if (!frames.length) return;
       document.getElementById('msg')?.remove();
 
       const s = document.createElement('div');
@@ -73,7 +74,6 @@
       s.appendChild(c);
       document.getElementById('feed').appendChild(s);
 
-      // Pré-carrega imagens para animar suavemente
       const imgs = frames.map(b64 => {
         const img = new Image();
         img.src = 'data:image/webp;base64,' + b64;
@@ -82,33 +82,40 @@
 
       let idx = 0, paused = false;
       c.onclick = () => paused = !paused;
-
       imgs.onload = () => { c.width = imgs.width; c.height = imgs.height; };
 
       setInterval(() => {
         if (paused || !imgs[idx]?.complete) return;
         ctx.drawImage(imgs[idx], 0, 0);
         idx = (idx + 1) % imgs.length;
-      }, 125); // 8 FPS
+      }, 125);
     }
 
     function update() {
-      if (list.length) location.hash = list.map(f => f.join(',')).join('|');
-      document.getElementById('info').textContent = `${list.length}/10 • ${Math.round(location.href.length/1024)} KB`;
+      if (list.length) {
+        const hash = '#' + list.map(f => f.join(',')).join('|');
+        fullLink = location.origin + location.pathname + hash;
+        // replaceState evita que o Chrome congele a barra de endereços com links grandes
+        try { history.replaceState(null, '', hash); } catch (e) {}
+      }
+      document.getElementById('info').textContent = `${list.length}/10 • ${Math.round(fullLink.length / 1024)} KB`;
     }
 
     document.getElementById('in').onchange = async e => {
       const files = Array.from(e.target.files).slice(0, 10 - list.length);
-      if (!files.length) return;
-      document.getElementById('info').textContent = 'A processar...';
-      
-      for (const f of files) {
-        const frames = await extractFrames(f);
-        list.push(frames);
-        addSlide(frames);
+      for (let i = 0; i < files.length; i++) {
+        document.getElementById('info').textContent = `A processar ${i + 1}/${files.length}...`;
+        const frames = await extractFrames(files[i]);
+        if (frames.length) { list.push(frames); addSlide(frames); }
       }
       update();
       e.target.value = '';
+    };
+
+    document.getElementById('copyBtn').onclick = function() {
+      navigator.clipboard.writeText(fullLink);
+      this.textContent = 'Link Copiado!';
+      setTimeout(() => this.textContent = 'Copiar Link', 2000);
     };
 
     if (location.hash.length > 1) {
