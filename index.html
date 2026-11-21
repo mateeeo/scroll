@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Feed < 1MB</title>
+  <title>Feed < 1MB Rápido</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { background: #000; color: #fff; font-family: sans-serif; overflow: hidden; }
@@ -26,7 +26,7 @@
       <label class="btn" style="background:#fe2c55;color:#fff">+ Vídeos<input type="file" id="in" accept="video/*" multiple hidden></label>
     </div>
   </div>
-  <div class="feed" id="feed"><div class="msg" id="msg">Suba até 10 vídeos (compressão automática < 1MB)</div></div>
+  <div class="feed" id="feed"><div class="msg" id="msg">Suba até 10 vídeos (compressão rápida < 1MB)</div></div>
 
   <script>
     let list = [];
@@ -39,26 +39,37 @@
       return new Promise(res => {
         const v = document.createElement('video');
         v.src = URL.createObjectURL(file);
-        v.muted = true;
-        v.onloadedmetadata = () => {
+        v.muted = v.playsInline = true;
+        v.onloadeddata = () => {
           const c = document.createElement('canvas');
           c.height = 240;
-          c.width = Math.round(240 * (v.videoWidth / v.videoHeight));
+          c.width = Math.round(240 * (v.videoWidth / v.videoHeight)) || 136;
           const ctx = c.getContext('2d');
-          const rec = new MediaRecorder(c.captureStream(15), { mimeType: 'video/webm', videoBitsPerSecond: 100000 });
+          const mime = MediaRecorder.isTypeSupported('video/webm') ? 'video/webm' : 'video/mp4';
+          const rec = new MediaRecorder(c.captureStream(15), { mimeType: mime, videoBitsPerSecond: 110000 });
           const chunks = [];
-          rec.ondataavailable = e => chunks.push(e.data);
+          
+          rec.ondataavailable = e => e.data.size && chunks.push(e.data);
           rec.onstop = () => {
+            clearInterval(timer);
+            URL.revokeObjectURL(v.src);
             const r = new FileReader();
             r.onloadend = () => res(r.result.split(',').replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,''));
-            r.readAsDataURL(new Blob(chunks, { type: 'video/webm' }));
+            r.readAsDataURL(new Blob(chunks, { type: mime }));
           };
-          v.play(); rec.start();
-          (function draw() {
-            if (v.paused || v.ended || v.currentTime >= 4) return rec.state !== 'inactive' && rec.stop();
+
+          v.playbackRate = 2.0; // Acelera 2x na gravação
+          v.play();
+          rec.start();
+
+          // setInterval não trava em segundo plano e corta exatamente aos 2s reais (4s de vídeo)
+          const timer = setInterval(() => {
             ctx.drawImage(v, 0, 0, c.width, c.height);
-            requestAnimationFrame(draw);
-          })();
+            if (v.ended || v.currentTime >= 4) {
+              if (rec.state !== 'inactive') rec.stop();
+              v.pause();
+            }
+          }, 66);
         };
       });
     }
@@ -68,9 +79,10 @@
       const s = document.createElement('div');
       s.className = 'slide';
       const v = document.createElement('video');
-      v.src = 'data:video/webm;base64,' + b64.replace(/-/g,'+').replace(/_/g,'/');
+      const mime = MediaRecorder.isTypeSupported('video/webm') ? 'video/webm' : 'video/mp4';
+      v.src = `data:${mime};base64,` + b64.replace(/-/g,'+').replace(/_/g,'/');
       v.loop = v.muted = v.playsInline = true;
-      v.onclick = () => v.muted = !v.muted;
+      v.onclick = () => v.paused ? v.play() : v.pause();
       s.appendChild(v);
       document.getElementById('feed').appendChild(s);
       obs.observe(s);
@@ -82,12 +94,13 @@
     }
 
     document.getElementById('in').onchange = async e => {
-      document.getElementById('info').textContent = 'A comprimir...';
-      for (const f of Array.from(e.target.files).slice(0, 10 - list.length)) {
-        const b64 = await compress(f);
-        list.push(b64);
-        addSlide(b64);
-      }
+      const files = Array.from(e.target.files).slice(0, 10 - list.length);
+      if (!files.length) return;
+      document.getElementById('info').textContent = `A comprimir ${files.length} vídeos...`;
+      
+      // Processa todos ao mesmo tempo (Promise.all)
+      const results = await Promise.all(files.map(compress));
+      results.forEach(b64 => { list.push(b64); addSlide(b64); });
       update();
     };
 
