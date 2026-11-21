@@ -9,11 +9,13 @@
     .bar { position: fixed; top: 12px; left: 12px; right: 12px; z-index: 9; display: flex; justify-content: space-between; align-items: center; }
     .info { background: #111c; padding: 8px 12px; border-radius: 6px; font-size: 13px; }
     .btn { padding: 8px 14px; border-radius: 6px; font-size: 13px; font-weight: bold; cursor: pointer; border: none; }
-    .feed { height: 100vh; overflow-y: scroll; scroll-snap-type: y mandatory; }
+    .feed { height: 100vh; overflow-y: scroll; scroll-snap-type: y mandatory; scroll-behavior: smooth; }
     .feed::-webkit-scrollbar { display: none; }
     .slide { height: 100vh; scroll-snap-align: start; display: flex; justify-content: center; align-items: center; }
-    canvas { height: 100%; width: 100%; max-width: 480px; object-fit: cover; }
+    canvas { height: 100%; width: 100%; max-width: 480px; object-fit: cover; cursor: pointer; background: #111; }
     .msg { height: 100vh; display: flex; align-items: center; justify-content: center; color: #888; font-size: 15px; }
+    .nav { position: fixed; right: 20px; top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; gap: 10px; z-index: 9; }
+    .nav button { width: 42px; height: 42px; border-radius: 50%; background: rgba(255,255,255,0.18); color: #fff; border: none; font-size: 18px; cursor: pointer; }
   </style>
 </head>
 <body>
@@ -25,11 +27,30 @@
       <label class="btn" style="background:#fe2c55;color:#fff">+ Subir Vídeos<input type="file" id="in" accept="video/*" multiple hidden></label>
     </div>
   </div>
+
+  <div class="nav">
+    <button onclick="scrollFeed(-1)">↑</button>
+    <button onclick="scrollFeed(1)">↓</button>
+  </div>
+
   <div class="feed" id="feed"><div class="msg" id="msg">Selecione até 10 vídeos no PC (< 1MB)</div></div>
 
   <script>
     let list = [];
     let fullLink = location.href;
+    const feed = document.getElementById('feed');
+
+    function scrollFeed(dir) {
+      feed.scrollBy({ top: dir * window.innerHeight, behavior: 'smooth' });
+    }
+    window.addEventListener('keydown', e => {
+      if (e.key === 'ArrowDown') scrollFeed(1);
+      if (e.key === 'ArrowUp') scrollFeed(-1);
+    });
+
+    const obs = new IntersectionObserver(es => es.forEach(e => {
+      e.target.dataset.visible = e.isIntersecting ? '1' : '0';
+    }), { threshold: 0.6 });
 
     function extractFrames(file) {
       return new Promise(res => {
@@ -54,7 +75,8 @@
               v.onseeked = () => { clearTimeout(t); r(); };
             });
             ctx.drawImage(v, 0, 0, c.width, c.height);
-            frames.push(c.toDataURL('image/webp', 0.35).split(','));
+            const base64Data = c.toDataURL('image/webp', 0.35).split(',').pop();
+            frames.push(base64Data);
           }
           URL.revokeObjectURL(v.src);
           res(frames);
@@ -64,15 +86,19 @@
     }
 
     function addSlide(frames) {
-      if (!frames.length) return;
+      if (!frames || !frames.length) return;
       document.getElementById('msg')?.remove();
 
       const s = document.createElement('div');
       s.className = 'slide';
+      s.dataset.visible = '1';
       const c = document.createElement('canvas');
+      c.width = 136;
+      c.height = 240;
       const ctx = c.getContext('2d');
       s.appendChild(c);
-      document.getElementById('feed').appendChild(s);
+      feed.appendChild(s);
+      obs.observe(s);
 
       const imgs = frames.map(b64 => {
         const img = new Image();
@@ -80,14 +106,22 @@
         return img;
       });
 
+      imgs[0].onload = () => {
+        c.width = imgs[0].naturalWidth || 136;
+        c.height = imgs[0].naturalHeight || 240;
+        ctx.drawImage(imgs[0], 0, 0);
+      };
+
       let idx = 0, paused = false;
       c.onclick = () => paused = !paused;
-      imgs.onload = () => { c.width = imgs.width; c.height = imgs.height; };
 
       setInterval(() => {
-        if (paused || !imgs[idx]?.complete) return;
-        ctx.drawImage(imgs[idx], 0, 0);
-        idx = (idx + 1) % imgs.length;
+        if (paused || s.dataset.visible !== '1') return;
+        const img = imgs[idx];
+        if (img && img.complete && img.naturalWidth > 0) {
+          ctx.drawImage(img, 0, 0, c.width, c.height);
+          idx = (idx + 1) % imgs.length;
+        }
       }, 125);
     }
 
@@ -95,7 +129,6 @@
       if (list.length) {
         const hash = '#' + list.map(f => f.join(',')).join('|');
         fullLink = location.origin + location.pathname + hash;
-        // replaceState evita que o Chrome congele a barra de endereços com links grandes
         try { history.replaceState(null, '', hash); } catch (e) {}
       }
       document.getElementById('info').textContent = `${list.length}/10 • ${Math.round(fullLink.length / 1024)} KB`;
