@@ -37,7 +37,7 @@
 
   <script>
     let list = [];
-    let fullLink = location.href;
+    let fullLink = location.origin + location.pathname;
     const feed = document.getElementById('feed');
 
     function scrollFeed(dir) {
@@ -77,7 +77,7 @@
             ctx.drawImage(v, 0, 0, c.width, c.height);
             const dataUrl = c.toDataURL('image/jpeg', 0.45);
             const b64 = dataUrl.slice(dataUrl.indexOf(',') + 1);
-            if (b64.length > 20) frames.push(b64);
+            if (b64.length > 50) frames.push(b64);
           }
           URL.revokeObjectURL(v.src);
           res(frames);
@@ -103,7 +103,7 @@
 
       const imgs = frames.map(b64 => {
         const img = new Image();
-        img.src = 'data:image/jpeg;base64,' + b64;
+        img.src = 'data:image/jpeg;base64,' + b64.replace(/[^A-Za-z0-9+/=]/g, '');
         return img;
       });
 
@@ -113,22 +113,21 @@
       setInterval(() => {
         if (paused || s.dataset.visible !== '1') return;
         const img = imgs.at(idx);
-        // Só desenha se a imagem carregou com sucesso (naturalWidth > 0 evita o erro broken state)
-        if (img && img.complete && img.naturalWidth > 0) {
+        if (!img || !img.complete || img.naturalWidth === 0) return;
+        try {
           if (c.width !== img.naturalWidth) {
             c.width = img.naturalWidth;
             c.height = img.naturalHeight;
           }
           ctx.drawImage(img, 0, 0, c.width, c.height);
           idx = (idx + 1) % imgs.length;
-        }
+        } catch (err) {}
       }, 125);
     }
 
     function update() {
       if (list.length) {
-        // Usa '~' em vez de ',' para nunca conflitar com o cabeçalho Base64
-        const hash = '#' + list.map(f => f.join('~')).join('|');
+        const hash = '#v2=' + list.map(f => f.join('~')).join('|');
         fullLink = location.origin + location.pathname + hash;
         try { history.replaceState(null, '', hash); } catch (e) {}
       }
@@ -152,10 +151,13 @@
       setTimeout(() => this.textContent = 'Copiar Link', 2000);
     };
 
-    if (location.hash.length > 1) {
-      list = location.hash.slice(1).split('|').map(v => v.split('~'));
+    // Só carrega se for o novo formato #v2=, ignorando lixo antigo na URL
+    if (location.hash.startsWith('#v2=')) {
+      list = location.hash.slice(4).split('|').map(v => v.split('~'));
       list.forEach(addSlide);
       update();
+    } else if (location.hash.length > 1) {
+      history.replaceState(null, '', location.pathname);
     }
   </script>
 </body>
