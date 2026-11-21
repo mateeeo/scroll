@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Feed < 1MB Rápido</title>
+  <title>Feed Instantâneo < 1MB</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { background: #000; color: #fff; font-family: sans-serif; overflow: hidden; }
@@ -12,8 +12,8 @@
     .btn { padding: 8px 12px; border-radius: 6px; font-size: 12px; font-weight: bold; cursor: pointer; border: none; }
     .feed { height: 100vh; overflow-y: scroll; scroll-snap-type: y mandatory; }
     .feed::-webkit-scrollbar { display: none; }
-    .slide { height: 100vh; scroll-snap-align: start; display: flex; justify-content: center; background: #000; }
-    video { height: 100%; width: 100%; max-width: 480px; object-fit: cover; }
+    .slide { height: 100vh; scroll-snap-align: start; display: flex; justify-content: center; align-items: center; background: #000; }
+    canvas { height: 100%; width: 100%; max-width: 480px; object-fit: cover; }
     .msg { height: 100vh; display: flex; align-items: center; justify-content: center; color: #888; font-size: 14px; text-align: center; padding: 20px; }
   </style>
 </head>
@@ -26,86 +26,93 @@
       <label class="btn" style="background:#fe2c55;color:#fff">+ Vídeos<input type="file" id="in" accept="video/*" multiple hidden></label>
     </div>
   </div>
-  <div class="feed" id="feed"><div class="msg" id="msg">Suba até 10 vídeos (compressão rápida < 1MB)</div></div>
+  <div class="feed" id="feed"><div class="msg" id="msg">Suba até 10 vídeos (compressão instantânea < 1MB)</div></div>
 
   <script>
-    let list = [];
-    const obs = new IntersectionObserver(es => es.forEach(e => {
-      const v = e.target.querySelector('video');
-      e.isIntersecting ? v.play().catch(()=>{}) : (v.pause(), v.currentTime = 0);
-    }), { threshold: 0.6 });
+    let list = []; // Guarda arrays de frames WebP por vídeo
 
-    function compress(file) {
+    // Extrai 16 frames ultra-leves saltando no tempo (sem esperar reprodução!)
+    function extractFrames(file) {
       return new Promise(res => {
         const v = document.createElement('video');
-        v.src = URL.createObjectURL(file);
         v.muted = v.playsInline = true;
-        v.onloadeddata = () => {
+        v.src = URL.createObjectURL(file);
+
+        v.onloadedmetadata = async () => {
           const c = document.createElement('canvas');
           c.height = 240;
           c.width = Math.round(240 * (v.videoWidth / v.videoHeight)) || 136;
           const ctx = c.getContext('2d');
-          const mime = MediaRecorder.isTypeSupported('video/webm') ? 'video/webm' : 'video/mp4';
-          const rec = new MediaRecorder(c.captureStream(15), { mimeType: mime, videoBitsPerSecond: 110000 });
-          const chunks = [];
           
-          rec.ondataavailable = e => e.data.size && chunks.push(e.data);
-          rec.onstop = () => {
-            clearInterval(timer);
-            URL.revokeObjectURL(v.src);
-            const r = new FileReader();
-            r.onloadend = () => res(r.result.split(',').replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,''));
-            r.readAsDataURL(new Blob(chunks, { type: mime }));
-          };
+          const frames = [];
+          const totalFrames = 16; // 16 frames a 8fps = 2s em loop contínuo (~65KB por vídeo)
+          const step = Math.min(v.duration || 2, 4) / totalFrames;
 
-          v.playbackRate = 2.0; // Acelera 2x na gravação
-          v.play();
-          rec.start();
-
-          // setInterval não trava em segundo plano e corta exatamente aos 2s reais (4s de vídeo)
-          const timer = setInterval(() => {
+          for (let i = 0; i < totalFrames; i++) {
+            v.currentTime = i * step;
+            await new Promise(r => v.onseeked = r);
             ctx.drawImage(v, 0, 0, c.width, c.height);
-            if (v.ended || v.currentTime >= 4) {
-              if (rec.state !== 'inactive') rec.stop();
-              v.pause();
-            }
-          }, 66);
+            // Exporta em WebP qualidade 0.35 (~3.5 KB por frame)
+            const data = c.toDataURL('image/webp', 0.35).split(',');
+            frames.push(data);
+          }
+          URL.revokeObjectURL(v.src);
+          res(frames);
         };
       });
     }
 
-    function addSlide(b64) {
+    function addSlide(frames) {
+      if (!frames || !frames.length) return;
       document.getElementById('msg')?.remove();
+
       const s = document.createElement('div');
       s.className = 'slide';
-      const v = document.createElement('video');
-      const mime = MediaRecorder.isTypeSupported('video/webm') ? 'video/webm' : 'video/mp4';
-      v.src = `data:${mime};base64,` + b64.replace(/-/g,'+').replace(/_/g,'/');
-      v.loop = v.muted = v.playsInline = true;
-      v.onclick = () => v.paused ? v.play() : v.pause();
-      s.appendChild(v);
+      const c = document.createElement('canvas');
+      const ctx = c.getContext('2d');
+      s.appendChild(c);
       document.getElementById('feed').appendChild(s);
-      obs.observe(s);
+
+      // Pré-carrega imagens para animar suavemente
+      const imgs = frames.map(b64 => {
+        const img = new Image();
+        img.src = 'data:image/webp;base64,' + b64;
+        return img;
+      });
+
+      let idx = 0, paused = false;
+      c.onclick = () => paused = !paused;
+
+      imgs.onload = () => { c.width = imgs.width; c.height = imgs.height; };
+
+      setInterval(() => {
+        if (paused || !imgs[idx]?.complete) return;
+        ctx.drawImage(imgs[idx], 0, 0);
+        idx = (idx + 1) % imgs.length;
+      }, 125); // 8 FPS
     }
 
     function update() {
-      if (list.length) location.hash = list.join('|');
+      if (list.length) location.hash = list.map(f => f.join(',')).join('|');
       document.getElementById('info').textContent = `${list.length}/10 • ${Math.round(location.href.length/1024)} KB`;
     }
 
     document.getElementById('in').onchange = async e => {
       const files = Array.from(e.target.files).slice(0, 10 - list.length);
       if (!files.length) return;
-      document.getElementById('info').textContent = `A comprimir ${files.length} vídeos...`;
+      document.getElementById('info').textContent = 'A processar...';
       
-      // Processa todos ao mesmo tempo (Promise.all)
-      const results = await Promise.all(files.map(compress));
-      results.forEach(b64 => { list.push(b64); addSlide(b64); });
+      for (const f of files) {
+        const frames = await extractFrames(f);
+        list.push(frames);
+        addSlide(frames);
+      }
       update();
+      e.target.value = '';
     };
 
     if (location.hash.length > 1) {
-      list = location.hash.slice(1).split('|');
+      list = location.hash.slice(1).split('|').map(v => v.split(','));
       list.forEach(addSlide);
       update();
     }
