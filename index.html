@@ -60,8 +60,8 @@
 
         v.onloadeddata = async () => {
           const c = document.createElement('canvas');
-          c.height = 220;
-          c.width = Math.round(220 * (v.videoWidth / v.videoHeight)) || 124;
+          c.height = 200;
+          c.width = Math.round(200 * (v.videoWidth / v.videoHeight)) || 112;
           const ctx = c.getContext('2d');
           
           const frames = [];
@@ -75,9 +75,10 @@
               v.onseeked = () => { clearTimeout(t); r(); };
             });
             ctx.drawImage(v, 0, 0, c.width, c.height);
-            // Guarda apenas a parte Base64 pura sem o cabeçalho
-            const dataUrl = c.toDataURL('image/webp', 0.35);
-            frames.push(dataUrl.replace('data:image/webp;base64,', ''));
+            // JPEG universal + corte exato após a vírgula do Data URL
+            const dataUrl = c.toDataURL('image/jpeg', 0.45);
+            const cleanB64 = dataUrl.substring(dataUrl.indexOf(',') + 1);
+            frames.push(cleanB64);
           }
           URL.revokeObjectURL(v.src);
           res(frames);
@@ -94,8 +95,8 @@
       s.className = 'slide';
       s.dataset.visible = '1';
       const c = document.createElement('canvas');
-      c.width = 124;
-      c.height = 220;
+      c.width = 112;
+      c.height = 200;
       const ctx = c.getContext('2d');
       s.appendChild(c);
       feed.appendChild(s);
@@ -103,15 +104,15 @@
 
       const imgs = frames.map(b64 => {
         const img = new Image();
-        img.src = 'data:image/webp;base64,' + b64;
+        img.src = 'data:image/jpeg;base64,' + b64;
         return img;
       });
 
       const firstImg = imgs.at(0);
       if (firstImg) {
         firstImg.onload = () => {
-          c.width = firstImg.naturalWidth || 124;
-          c.height = firstImg.naturalHeight || 220;
+          c.width = firstImg.naturalWidth || 112;
+          c.height = firstImg.naturalHeight || 200;
           ctx.drawImage(firstImg, 0, 0, c.width, c.height);
         };
       }
