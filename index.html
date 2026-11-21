@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Feed de Vídeos - Raw no Link</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background-color: #000;
+      color: #fff;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      overflow: hidden;
+    }
+
+    .top-bar {
+      position: fixed;
+      top: 16px;
+      left: 16px;
+      right: 16px;
+      z-index: 100;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .size-indicator {
+      background: rgba(20, 20, 20, 0.85);
+      padding: 8px 12px;
+      border-radius: 8px;
+      font-size: 12px;
+      color: #ccc;
+      backdrop-filter: blur(8px);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+    }
+
+    .actions {
+      display: flex;
+      gap: 8px;
+    }
+
+    .btn {
+      padding: 9px 14px;
+      border-radius: 8px;
+      font-weight: 600;
+      font-size: 13px;
+      cursor: pointer;
+      border: none;
+      transition: opacity 0.2s;
+    }
+
+    .btn:hover { opacity: 0.9; }
+    .upload-btn { background-color: #fe2c55; color: #fff; }
+    .share-btn { background-color: #25d366; color: #000; font-weight: bold; }
+    .clear-btn { background-color: rgba(255, 255, 255, 0.18); color: #fff; }
+    #videoInput { display: none; }
+
+    .feed-container {
+      height: 100vh;
+      width: 100vw;
+      overflow-y: scroll;
+      scroll-snap-type: y mandatory;
+      scroll-behavior: smooth;
+    }
+    .feed-container::-webkit-scrollbar { display: none; }
+    .feed-container { -ms-overflow-style: none; scrollbar-width: none; }
+
+    .video-slide {
+      height: 100vh;
+      width: 100vw;
+      scroll-snap-align: start;
+      position: relative;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      background: #0a0a0a;
+    }
+
+    video {
+      height: 100%;
+      width: 100%;
+      max-width: 500px;
+      object-fit: cover;
+      background: #000;
+    }
+
+    .video-info {
+      position: absolute;
+      bottom: 30px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 90%;
+      max-width: 460px;
+      pointer-events: none;
+      text-shadow: 0 2px 6px rgba(0, 0, 0, 0.8);
+    }
+
+    .video-title { font-size: 16px; font-weight: bold; margin-bottom: 4px; }
+    .video-hint { font-size: 12px; color: #ccc; }
+
+    .empty-state {
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      text-align: center;
+      padding: 20px;
+      color: #aaa;
+    }
+    .empty-state h2 { color: #fff; margin-bottom: 10px; }
+    .empty-state p { max-width: 420px; line-height: 1.5; font-size: 14px; }
+  </style>
+</head>
+<body>
+
+  <div class="top-bar">
+    <div class="size-indicator" id="sizeIndicator">Tamanho do Link: 0 KB</div>
+
+    <div class="actions">
+      <button class="btn clear-btn" id="clearBtn">Limpar</button>
+      <button class="btn share-btn" id="shareBtn">Copiar Link Raw</button>
+      <label for="videoInput" class="btn upload-btn">+ Subir Vídeos</label>
+      <input type="file" id="videoInput" accept="video/*" multiple>
+    </div>
+  </div>
+
+  <div class="feed-container" id="feedContainer">
+    <div class="empty-state" id="emptyState">
+      <h2>Feed embutido no Link</h2>
+      <p>Suba vídeos curtos (recomendado até 1 MB no total). Os dados <strong>raw (Base64)</strong> serão gravados diretamente na URL para partilhar entre dispositivos.</p>
+    </div>
+  </div>
+
+  <script>
+    const videoInput = document.getElementById('videoInput');
+    const feedContainer = document.getElementById('feedContainer');
+    const emptyState = document.getElementById('emptyState');
+    const shareBtn = document.getElementById('shareBtn');
+    const clearBtn = document.getElementById('clearBtn');
+    const sizeIndicator = document.getElementById('sizeIndicator');
+
+    // Lista em memória dos vídeos codificados em raw (Data URL)
+    let videosList = [];
+
+    // Controla reprodução no scroll
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach(entry => {
+        const video = entry.target.querySelector('video');
+        if (!video) return;
+        if (entry.isIntersecting) {
+          video.play().catch(() => {});
+        } else {
+          video.pause();
+          video.currentTime = 0;
+        }
+      });
+    }, { threshold: 0.6 });
+
+    // Converte ficheiro de vídeo em string Raw (Base64)
+    function fileToRawBase64(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+    }
+
+    // Atualiza o hash (#) da URL com todos os vídeos em formato raw
+    function syncUrlHash() {
+      if (videosList.length === 0) {
+        history.replaceState(null, '', window.location.pathname);
+        sizeIndicator.textContent = 'Tamanho do Link: 0 KB';
+        return;
+      }
+
+      // Serializa em JSON e codifica em URI seguro para o hash da URL
+      const jsonString = JSON.stringify(videosList);
+      const encodedPayload = encodeURIComponent(jsonString);
+
+      try {
+        window.location.hash = `raw=${encodedPayload}`;
+        // Guarda também backup no localStorage
+        try { localStorage.setItem('backupRawVideos', jsonString); } catch (e) {}
+      } catch (err) {
+        alert('O vídeo excedeu o limite máximo de tamanho da URL do navegador.');
+      }
+
+      const sizeKB = Math.round(window.location.href.length / 1024);
+      sizeIndicator.textContent = `Tamanho do Link: ${sizeKB} KB` + (sizeKB > 2000 ? ' (⚠️ Muito pesado para WhatsApp)' : '');
+    }
+
+    // Renderiza um slide de vídeo
+    function renderSlide(videoObj) {
+      if (emptyState && emptyState.parentNode) {
+        emptyState.remove();
+      }
+
+      const slide = document.createElement('div');
+      slide.className = 'video-slide';
+
+      const video = document.createElement('video');
+      video.src = videoObj.data; // Lê diretamente o raw Base64
+      video.loop = true;
+      video.playsInline = true;
+
+      video.addEventListener('click', () => {
+        video.paused ? video.play() : video.pause();
+      });
+
+      const info = document.createElement('div');
+      info.className = 'video-info';
+      info.innerHTML = `
+        <div class="video-title">${videoObj.name}</div>
+        <div class="video-hint">Embutido no Link (Raw) • Toque para pausar/reproduzir</div>
+      `;
+
+      slide.appendChild(video);
+      slide.appendChild(info);
+      feedContainer.appendChild(slide);
+      observer.observe(slide);
+    }
+
+    // Carrega os vídeos diretamente da URL (#raw=...) ao abrir em qualquer dispositivo
+    function loadFromUrl() {
+      const hash = window.location.hash;
+      if (hash && hash.startsWith('#raw=')) {
+        try {
+          const encoded = hash.substring(5);
+          const decodedJson = decodeURIComponent(encoded);
+          videosList = JSON.parse(decodedJson);
+
+          videosList.forEach(v => renderSlide(v));
+
+          const sizeKB = Math.round(window.location.href.length / 1024);
+          sizeIndicator.textContent = `Tamanho do Link: ${sizeKB} KB`;
+        } catch (e) {
+          alert('O link está incompleto ou foi cortado ao ser partilhado.');
+        }
+      }
+    }
+
+    // Evento de Upload
+    videoInput.addEventListener('change', async (event) => {
+      const files = Array.from(event.target.files);
+      for (const file of files) {
+        const rawData = await fileToRawBase64(file);
+        const videoObj = {
+          name: file.name.replace(/\.[^/.]+$/, ""),
+          data: rawData
+        };
+        videosList.push(videoObj);
+        renderSlide(videoObj);
+      }
+      syncUrlHash();
+      videoInput.value = '';
+    });
+
+    // Copiar o link completo com o raw embutido
+    shareBtn.addEventListener('click', () => {
+      if (videosList.length === 0) {
+        alert('Suba pelo menos um vídeo primeiro.');
+        return;
+      }
+      navigator.clipboard.writeText(window.location.href);
+      shareBtn.textContent = 'Link Raw Copiado!';
+      setTimeout(() => shareBtn.textContent = 'Copiar Link Raw', 2500);
+    });
+
+    // Limpar tudo
+    clearBtn.addEventListener('click', () => {
+      videosList = [];
+      localStorage.removeItem('backupRawVideos');
+      window.location.hash = '';
+      location.reload();
+    });
+
+    // Inicializa lendo o link
+    loadFromUrl();
+  </script>
+
+</body>
+</html>
